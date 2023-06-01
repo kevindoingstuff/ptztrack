@@ -6,11 +6,16 @@ import math
 import cv2
 import numpy as np
 from collections import OrderedDict
+import time
 
-def uncertainty_range(centre_coord):
+def uncertainty_range(centre_coord, percentage_inflation = 0.10):
+    #check if percentage_inflation is in decimal form and fix if not,
+    centre_coord = centre_coord * 2 
+    if percentage_inflation > 1:
+        percentage_inflation = percentage_inflation / 100
     # Calculate uncertainty range
-    uncertainty_range_x = 0.15 * centre_coord[0]
-    uncertainty_range_y = 0.15 * centre_coord[1]
+    uncertainty_range_x = percentage_inflation * centre_coord[0]
+    uncertainty_range_y = percentage_inflation * centre_coord[1]
     uncertainty_range = [uncertainty_range_x, uncertainty_range_y] 
     return uncertainty_range
 
@@ -27,17 +32,16 @@ def scale_img(input_size, coord, x_range, y_range):
     coord[1] = int(coord[1]/input_size[1] * (y_range[1] - y_range[0]) + y_range[0])
     return coord
 
-def spherical_to_cartesian(azimuth, elevation, zoom, elevation_limits, azimuth_limits):   # Not working
+def spherical_to_cartesian(azimuth, elevation, zoom):   # Not working
     # Convert spherical coordinates to cartesian coordinates
     # Azimuth is the angle from the x-axis to the projection of the vector onto the xy-plane
     # Elevation is the angle from the xy-plane to the vector, i.e. angle between the vector and the z-axis
     
     # Normalize and transform into correct range
-    transformed_azimuth = (azimuth - azimuth_limits[0]) / (azimuth_limits[1] - azimuth_limits[0]) * 360
-    transformed_elevation = (elevation - elevation_limits[0]) / (elevation_limits[1] - elevation_limits[0]) * 360
+    transformed_zoom = zoom/10
     # Convert to radians
-    azimuth = azimuth * math.pi / 180
-    elevation = elevation * math.pi / 180
+    azimuth = 0.1 * azimuth * (math.pi / 180)
+    elevation = 0.1 * elevation * (math.pi / 180)
 
     # Calculate x, y, z coordinates
     x = zoom * math.cos(elevation) * math.cos(azimuth)
@@ -51,12 +55,24 @@ def preprocess_detection_box(input_size, coord_start, coord_end, x_range, y_rang
     coord_end = scale_img(input_size, coord_end, x_range, y_range)    
     return coord_start, coord_end
 
-def query_hikcamera_pos(user_credentials, camera_ip): 
+def query_hikcamera_pos(user_credentials, rtsp_id, camera_ip): # returns x,y,z coordinates
     # Query camera azimuth, elevation and zoom information and save to output.txt
-    subprocess.run(shlex.split('curl -X GET http://' + user_credentials + '@' + camera_ip + '/ISAPI/PTZCtrl/channels/1/status -o output.txt'))
+    subprocess.run(shlex.split(f'curl -X GET http://{user_credentials}@{rtsp_id}/ISAPI/PTZCtrl/channels/{camera_ip}/status -o output.txt'))
     ### Parse output.txt and return x,y coordinates
-
+    with open('output.txt', 'r') as f:
+        lines = f.readlines()
+        for line in lines:
+            if "elevation" in line:
+                elevation = float(line.split('>')[1].split('<')[0])
+            elif "azimuth" in line:
+                azimuth = float(line.split('>')[1].split('<')[0])
+            elif "absoluteZoom" in line:
+                zoom = float(line.split('>')[1].split('<')[0])
+    
+    return spherical_to_cartesian(azimuth, elevation, zoom)
+        
 def patrol_hikcamera():
+
     # Patrol camera
     pass
 
@@ -83,6 +99,7 @@ def reposition_hikcamera(top_left, btm_right, user_credentials, camera_ip) -> No
 
 def move_towards(centre_image, centre_target, move_speed, user_credentials, camera_ip, rtsp_ip) -> None:
     # normalize and transform into correct range
+    test1_start = time.time()
     speed = (100/10)*move_speed
     #If centre_target not in centre of image, move in the direction
     if  centre_target[0] > centre_image[0]:
@@ -110,9 +127,40 @@ def move_towards(centre_image, centre_target, move_speed, user_credentials, came
     xml = dict2xml(d)
     with open('ptzdata.xml', 'w') as f:
         f.write(xml)
+    test1 = time.time() - test1_start
+    print(f"xml time: {test1}")
+    test2_start = time.time()
     subprocess.run(shlex.split(f'curl -X PUT -T ptzdata.xml http://{user_credentials}@{rtsp_ip}/ISAPI/PTZCtrl/channels/{camera_ip}/continuous'))
+    test2 = time.time() - test2_start
+    print(f"curl time: {test2}")
 
-def refocus_hikcamera(top_left, btm_right,user_credentials, camera_ip) -> None:
+def zoom_in(zoom_value, user_credentials, camera_ip, camera_id) -> None:
+    # Zoom in
+    d = OrderedDict()
+    d['PTZData'] = OrderedDict()
+    d['PTZData']['pan'] = int(0)
+    d['PTZData']['tilt'] = int(0)
+    d['PTZData']['zoom'] = int(zoom_value)
+
+    xml = dict2xml(d)
+    with open('ptzdata.xml', 'w') as f:
+        f.write(xml)
+    subprocess.run(shlex.split(f'curl -X PUT -T ptzdata.xml http://{user_credentials}@{camera_ip}/ISAPI/PTZCtrl/channels/{camera_id}/continuous'))
+
+def zoom_limiter(frame_shape, det_box_size, zoom_limit_coeff):
+    # Check if zoom value is too big
+    zoom_bool = False
+    excess_zoom_check = [False,False]
+    if  frame_shape[0] * zoom_limit_coeff < det_box_size[0]:
+        zoom_bool = True
+        
+    elif frame_shape[1] * zoom_limit_coeff < det_box_size[1]:
+        zoom_bool = True
+    else:
+        zoom_bool = False
+    return zoom_bool
+              
+def refocus_hikcamera(top_left, btm_right,user_credentials, rtsp_ip, camera_ip) -> None:
     # Refocus camera to detection box
     ff = {
         
@@ -131,7 +179,7 @@ def refocus_hikcamera(top_left, btm_right,user_credentials, camera_ip) -> None:
     xml = dict2xml(ff)
     with open('regional_focus.xml', 'w') as f:
         f.write(xml)
-    subprocess.run(shlex.split('curl -X PUT -T regional_focus.xml http://' + user_credentials + '@' + camera_ip+ '/ISAPI/PTZCtrl/channels/1/regionalFocus'))
+    subprocess.run(shlex.split(f'curl -X PUT -T regional_focus.xml http://{user_credentials}@{rtsp_ip}/ISAPI/PTZCtrl/channels/{camera_ip}/regionalFocus'))
 
 def reexposure_hikcamera(top_left, btm_right, user_credentials, camera_ip) -> None:
     # Reexposure camera to detection box
@@ -197,19 +245,28 @@ def reset_hikcamera(zoom_speed, focus_mode, user_credentials, camera_ip) -> None
         
     generate_xml()
     # Initialization commands 
-    subprocess.run(shlex.split('curl -X PUT -T zoom_speed.xml http://' + user_credentials + '@' + camera_ip + '/ISAPI/' )) ###
+    #subprocess.run(shlex.split('curl -X PUT -T zoom_speed.xml http://' + user_credentials + '@' + camera_ip + '/ISAPI/' )) ###
 
     # Reset camera to default position
-    subprocess.run(shlex.split('curl -X PUT http://' + user_credentials + '@' + camera_ip + '/ISAPI/PTZCtrl/channels/1/presets/32/goto'))
+    subprocess.run(shlex.split('curl -X PUT http://' + user_credentials + '@' + camera_ip + '/ISAPI/PTZCtrl/channels/1/presets/2/goto'))
 
     # Set camera to auto focus
-    subprocess.run(shlex.split('curl -X PUT -T focus_mode.xml http://' + user_credentials + '@' + camera_ip + '/ISAPI/Imaging/channels/1/focusMode'))
+    #subprocess.run(shlex.split('curl -X PUT -T focus_mode.xml http://' + user_credentials + '@' + camera_ip + '/ISAPI/Imaging/channels/1/focusMode'))
 
     # Set camera to auto iris
-    subprocess.run(shlex.split('curl -X PUT -T iris_mode.xml http://' + user_credentials + '@' + camera_ip + '/ISAPI/Imaging/channels/1/irisMode'))
+    #subprocess.run(shlex.split('curl -X PUT -T iris_mode.xml http://' + user_credentials + '@' + camera_ip + '/ISAPI/Imaging/channels/1/irisMode'))
 
     # Set camera to auto white balance
-    subprocess.run(shlex.split('curl -X PUT -T white_balance_mode.xml http://' + user_credentials + '@' + camera_ip + '/ISAPI/Imaging/channels/1/whiteBalanceMode'))
+    #subprocess.run(shlex.split(f'curl -X PUT -T white_balance_mode.xml http://' + user_credentials + '@' + camera_ip + '/ISAPI/Imaging/channels/1/whiteBalanceMode'))
+
+######## YOLOv5 Functions ########
+
+def get_persons(model, img):
+    results = model(img)
+    dets = results.xyxy[0]
+    #print(results.pandas().xyxy[0])
+    persons = dets[(dets[:,-1] == 0.0) & (dets[:,-2] > 0.5)]
+    return persons  
 
 def click_event(event, x, y, flags, params):
     global img_w
@@ -224,11 +281,3 @@ def click_event(event, x, y, flags, params):
         point_coord = (x,y)
         print("Moving to " + str(point_coord))
         global img_w, img_h
-
-def get_persons(model, img):
-    results = model(img)
-    dets = results.xyxy[0]
-    #print(results.pandas().xyxy[0])
-    persons = dets[(dets[:,-1] == 0.0) & (dets[:,-2] > 0.5)]
-    return persons  
-
