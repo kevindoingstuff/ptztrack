@@ -7,7 +7,17 @@ import cv2
 import numpy as np
 from collections import OrderedDict
 import time
+import requests
 
+def camera_info_packager(user_credentials, camera_ip, camera_stream_number):
+    username = user_credentials.split(':')[0]
+    password = user_credentials.split(':')[1]
+    requests_user_credentials = (username, password)
+    camera_info = [user_credentials, camera_ip, camera_stream_number, requests_user_credentials]
+    return camera_info
+
+    
+    
 def uncertainty_range(centre_coord, percentage_inflation = 0.10):
     #check if percentage_inflation is in decimal form and fix if not,
     centre_coord = centre_coord * 2 
@@ -97,9 +107,12 @@ def reposition_hikcamera(top_left, btm_right, user_credentials, camera_ip) -> No
         f.write(xml)
     subprocess.run(shlex.split('curl -X PUT -T position3D.xml http://' + user_credentials + '@' + camera_ip + '/ISAPI/PTZCtrl/channels/1/position3D'))
 
-def move_towards(centre_image, centre_target, move_speed, user_credentials, camera_ip, rtsp_ip) -> None:
+def move_towards(centre_image, centre_target, move_speed, camera_info) -> None:
+    test2_start = time.time()
+    user_credentials = requests.auth.HTTPBasicAuth(camera_info[3][0], camera_info[3][1])
+    url = f"http://{camera_info[1]}/ISAPI/PTZCtrl/channels/{camera_info[2]}/continuous"
+    headers = {'Content-Type': 'application/xml'}
     # normalize and transform into correct range
-    test1_start = time.time()
     speed = (100/10)*move_speed
     #If centre_target not in centre of image, move in the direction
     if  centre_target[0] > centre_image[0]:
@@ -127,14 +140,20 @@ def move_towards(centre_image, centre_target, move_speed, user_credentials, came
     xml = dict2xml(d)
     with open('ptzdata.xml', 'w') as f:
         f.write(xml)
-    test1 = time.time() - test1_start
-    print(f"xml time: {test1}")
-    test2_start = time.time()
-    subprocess.run(shlex.split(f'curl -X PUT -T ptzdata.xml http://{user_credentials}@{rtsp_ip}/ISAPI/PTZCtrl/channels/{camera_ip}/continuous'))
-    test2 = time.time() - test2_start
-    print(f"curl time: {test2}")
+    
 
-def zoom_in(zoom_value, user_credentials, camera_ip, camera_id) -> None:
+    response = requests.put(url, data=open('ptzdata.xml', 'rb'), headers=headers, auth=user_credentials)
+    if response.status_code != requests.codes.ok:
+        print("Request failed:", response.text)
+    
+    test2 = time.time() - test2_start
+    print(f"move issue time: {test2}")
+
+def zoom_in(zoom_value, camera_info) -> None:
+    test_start = time.time()
+    user_credentials = requests.auth.HTTPBasicAuth(camera_info[3][0], camera_info[3][1])
+    url = f"http://{camera_info[1]}/ISAPI/PTZCtrl/channels/{camera_info[2]}/continuous"
+    headers = {'Content-Type': 'application/xml'}
     # Zoom in
     d = OrderedDict()
     d['PTZData'] = OrderedDict()
@@ -145,7 +164,12 @@ def zoom_in(zoom_value, user_credentials, camera_ip, camera_id) -> None:
     xml = dict2xml(d)
     with open('ptzdata.xml', 'w') as f:
         f.write(xml)
-    subprocess.run(shlex.split(f'curl -X PUT -T ptzdata.xml http://{user_credentials}@{camera_ip}/ISAPI/PTZCtrl/channels/{camera_id}/continuous'))
+    
+    response = requests.put(url, data=open('ptzdata.xml', 'rb'), headers=headers, auth=user_credentials)
+    if response.status_code != requests.codes.ok:
+        print("Request failed:", response.text)
+    test = time.time() - test_start
+    print(f"zoom issue time: {test}")
 
 def zoom_limiter(frame_shape, det_box_size, zoom_limit_coeff):
     # Check if zoom value is too big
