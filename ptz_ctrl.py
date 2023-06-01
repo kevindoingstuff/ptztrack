@@ -19,7 +19,7 @@ no_person = 0
 # Initialize camera
 with rtsp.Client(rtsp_server_uri = rtsp_url) as client:
     frame = client.read(raw = True)
-    ptz.reset_hikcamera(0,0, user_credentials, camera_ip)
+    ptz.reset_hikcamera(0,0, camera_info)
     while True:
         loop_start = time.time()
         if frame is not None:
@@ -59,10 +59,10 @@ with rtsp.Client(rtsp_server_uri = rtsp_url) as client:
                     frame_det_distance = [x_left, x_right, y_btm, y_top]
                     
                     API_start = time.time()
-                    if conf > 0.60 and not ptz.is_person_in_center(centre_coord, person_center, inflated_centre):
+                    if conf > 0.50 and not ptz.is_person_in_center(centre_coord, person_center, inflated_centre):
                         if ptz.zoom_limiter(frame_shape, det_box_size, 0.5):
                             print('Zooming out')
-                            ptz.zoom_in(-1, camera_info)
+                            ptz.zoom_in(0, camera_info)
                         else:
                             ptz.move_towards(centre_coord, person_center, 3, camera_info)
                             #check_x, check_y, check_z = ptz.query_hikcamera_pos(user_credentials, camera_ip, camera_stream_number)
@@ -74,7 +74,7 @@ with rtsp.Client(rtsp_server_uri = rtsp_url) as client:
                         ptz.zoom_in(1, camera_info)
                 else:
                     print('No person detected')
-                    ptz.zoom_in(0, camera_info)
+                    ptz.zoom_in(-1, camera_info)
                     #_,_,zoom_value = ptz.query_hikcamera_pos(user_credentials, camera_ip, camera_stream_number)
                     #print(zoom_value)
 

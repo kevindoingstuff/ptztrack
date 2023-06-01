@@ -16,8 +16,6 @@ def camera_info_packager(user_credentials, camera_ip, camera_stream_number):
     camera_info = [user_credentials, camera_ip, camera_stream_number, requests_user_credentials]
     return camera_info
 
-    
-    
 def uncertainty_range(centre_coord, percentage_inflation = 0.10):
     #check if percentage_inflation is in decimal form and fix if not,
     centre_coord = centre_coord * 2 
@@ -86,7 +84,7 @@ def patrol_hikcamera():
     # Patrol camera
     pass
 
-def reposition_hikcamera(top_left, btm_right, user_credentials, camera_ip) -> None:
+def reposition_hikcamera(top_left, btm_right, user_credentials, camera_ip) -> None: 
 
     # Reposition camera to detection box
     d = {
@@ -107,7 +105,7 @@ def reposition_hikcamera(top_left, btm_right, user_credentials, camera_ip) -> No
         f.write(xml)
     subprocess.run(shlex.split('curl -X PUT -T position3D.xml http://' + user_credentials + '@' + camera_ip + '/ISAPI/PTZCtrl/channels/1/position3D'))
 
-def move_towards(centre_image, centre_target, move_speed, camera_info) -> None:
+def move_towards(centre_image, centre_target, move_speed, camera_info) -> None: #Edited
     test2_start = time.time()
     user_credentials = requests.auth.HTTPBasicAuth(camera_info[3][0], camera_info[3][1])
     url = f"http://{camera_info[1]}/ISAPI/PTZCtrl/channels/{camera_info[2]}/continuous"
@@ -149,7 +147,7 @@ def move_towards(centre_image, centre_target, move_speed, camera_info) -> None:
     test2 = time.time() - test2_start
     print(f"move issue time: {test2}")
 
-def zoom_in(zoom_value, camera_info) -> None:
+def zoom_in(zoom_value, camera_info) -> None: #Edited
     test_start = time.time()
     user_credentials = requests.auth.HTTPBasicAuth(camera_info[3][0], camera_info[3][1])
     url = f"http://{camera_info[1]}/ISAPI/PTZCtrl/channels/{camera_info[2]}/continuous"
@@ -184,7 +182,10 @@ def zoom_limiter(frame_shape, det_box_size, zoom_limit_coeff):
         zoom_bool = False
     return zoom_bool
               
-def refocus_hikcamera(top_left, btm_right,user_credentials, rtsp_ip, camera_ip) -> None:
+def refocus_hikcamera(top_left, btm_right, camera_info) -> None:
+    user_credentials = requests.auth.HTTPBasicAuth(camera_info[3][0], camera_info[3][1])
+    url = f"http://{camera_info[1]}/ISAPI/PTZCtrl/channels/{camera_info[2]}/regionalFocus"
+    headers = {'Content-Type': 'application/xml'}
     # Refocus camera to detection box
     ff = {
         
@@ -203,9 +204,14 @@ def refocus_hikcamera(top_left, btm_right,user_credentials, rtsp_ip, camera_ip) 
     xml = dict2xml(ff)
     with open('regional_focus.xml', 'w') as f:
         f.write(xml)
-    subprocess.run(shlex.split(f'curl -X PUT -T regional_focus.xml http://{user_credentials}@{rtsp_ip}/ISAPI/PTZCtrl/channels/{camera_ip}/regionalFocus'))
+    response = requests.put(url, data=open('regional_focus.xml', 'rb'), headers=headers, auth=user_credentials)
+    if response.status_code != requests.codes.ok:
+        print("Request failed:", response.text)
 
-def reexposure_hikcamera(top_left, btm_right, user_credentials, camera_ip) -> None:
+def reexposure_hikcamera(top_left, btm_right, camera_info) -> None:
+    user_credentials = requests.auth.HTTPBasicAuth(camera_info[3][0], camera_info[3][1])
+    url = f"http://{camera_info[1]}/ISAPI/PTZCtrl/channels/{camera_info[2]}/exposureRegion"
+    headers = {'Content-Type': 'application/xml'}    
     # Reexposure camera to detection box
     ee = {
         'RegionalExposure': {
@@ -223,9 +229,14 @@ def reexposure_hikcamera(top_left, btm_right, user_credentials, camera_ip) -> No
     xml = dict2xml(ee)
     with open('exposure_region.xml', 'w') as f:
         f.write(xml)
-    subprocess.run(shlex.split('curl -X PUT -T exposure_region.xml http://' + user_credentials + '@' + camera_ip + '/ISAPI/PTZCtrl/channels/1/exposureRegion'))
+    response = requests.put(url, data=open('exposure_region.xml', 'rb'), headers=headers, auth=user_credentials)
+    if response.status_code != requests.codes.ok:
+        print("Request failed:", response.text)
 
-def reset_hikcamera(zoom_speed, focus_mode, user_credentials, camera_ip) -> None:
+def reset_hikcamera(zoom_speed, focus_mode, camera_info) -> None:
+    user_credentials = requests.auth.HTTPBasicAuth(camera_info[3][0], camera_info[3][1])
+    url = f"http://{camera_info[1]}/ISAPI/PTZCtrl/channels/{camera_info[2]}/presets/2/goto"
+    reset_header = {'Content-Type': 'application/xml'}
     def generate_xml():
         # Generate xml file for zoom speed
         d = {
@@ -272,8 +283,9 @@ def reset_hikcamera(zoom_speed, focus_mode, user_credentials, camera_ip) -> None
     #subprocess.run(shlex.split('curl -X PUT -T zoom_speed.xml http://' + user_credentials + '@' + camera_ip + '/ISAPI/' )) ###
 
     # Reset camera to default position
-    subprocess.run(shlex.split('curl -X PUT http://' + user_credentials + '@' + camera_ip + '/ISAPI/PTZCtrl/channels/1/presets/2/goto'))
-
+    reset = requests.put(url, headers=reset_header, auth=user_credentials)
+    if reset.status_code != requests.codes.ok:
+        print("Request failed:", reset.text)
     # Set camera to auto focus
     #subprocess.run(shlex.split('curl -X PUT -T focus_mode.xml http://' + user_credentials + '@' + camera_ip + '/ISAPI/Imaging/channels/1/focusMode'))
 
